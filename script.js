@@ -245,7 +245,7 @@
         const pinPopupClose = document.getElementById('pin-popup-close');
 
         // DEFAULT PIN: Silakan ubah angka ini jika ingin PIN lain
-        const SECRET_PIN = "080126";
+        const SECRET_PIN = "2003";
 
         let pinAttempt = 0;
         let popupTimeout = null;
@@ -351,7 +351,7 @@
 
         if (pinInput) {
             pinInput.addEventListener('input', function () {
-                if (pinInput.value.length === 6) {
+                if (pinInput.value.length === SECRET_PIN.length) {
                     // Delay sedikit agar digit terakhir terasa diketik
                     setTimeout(() => {
                         if (pinInput.value === SECRET_PIN) {
@@ -575,19 +575,28 @@ document.addEventListener("DOMContentLoaded", function () {
                 else {
                     modalImg.src = this.src;
                     const cardParent = this.closest('.scratch-card');
-                    const isLandscape = (cardParent && cardParent.classList.contains('aspect-4-3')) ||
+                    const isCard32 = (cardParent && cardParent.classList.contains('aspect-3-2')) ||
                         (this.naturalWidth && this.naturalHeight && (this.naturalWidth / this.naturalHeight > 1.2));
+                    const isCard916 = cardParent && cardParent.classList.contains('aspect-9-16');
 
-                    if (isLandscape) {
-                        // Foto 4:3 (landscape)
-                        modalImg.style.aspectRatio = "4 / 3";
+                    if (isCard32) {
+                        // Foto 3:2 (landscape)
+                        modalImg.style.aspectRatio = "3 / 2";
                         modalImg.style.width = "auto";
                         modalImg.style.height = "auto";
                         modalImg.style.maxWidth = "92vw";
                         modalImg.style.maxHeight = "75vh";
                         modalImg.style.objectFit = "contain";
+                    } else if (isCard916) {
+                        // Foto 9:16 (portrait tinggi)
+                        modalImg.style.aspectRatio = "9 / 16";
+                        modalImg.style.width = "auto";
+                        modalImg.style.height = "75vh";
+                        modalImg.style.maxWidth = "90vw";
+                        modalImg.style.maxHeight = "75vh";
+                        modalImg.style.objectFit = "cover";
                     } else {
-                        // Foto 3:4 (portrait)
+                        // Default portrait
                         modalImg.style.aspectRatio = "3 / 4";
                         modalImg.style.width = "auto";
                         modalImg.style.height = "75vh";
@@ -640,8 +649,12 @@ function tutupModal() {
 // ==========================================
 function initVideoMemories() {
     const videos = document.querySelectorAll('.memory-video');
+    const bgMusic = document.getElementById('bg-music');
+    const iconPlay = document.getElementById('icon-play');
+    const iconPause = document.getElementById('icon-pause');
 
     videos.forEach(video => {
+        // Otomatis matikan (pause) backsong saat video diputar
         video.addEventListener('play', function () {
             // Hentikan video lain jika sedang menyala agar tidak bertumpuk
             videos.forEach(otherVideo => {
@@ -649,44 +662,88 @@ function initVideoMemories() {
                     otherVideo.pause();
                 }
             });
-            // Lagu latar (bg-music) tetap terus berputar tanpa dijeda
+
+            // Otomatis matikan backsong saat memutar video
+            if (bgMusic && !bgMusic.paused) {
+                bgMusic.pause();
+                video.setAttribute('data-paused-bgmusic', 'true');
+                if (iconPlay) iconPlay.style.display = 'block';
+                if (iconPause) iconPause.style.display = 'none';
+            }
         });
+
+        // Resume backsong saat video di-pause atau selesai (jika tidak ada video lain yang menyala)
+        const resumeBgMusic = function () {
+            const anyVideoPlaying = Array.from(videos).some(v => !v.paused);
+            if (!anyVideoPlaying && video.getAttribute('data-paused-bgmusic') === 'true') {
+                video.removeAttribute('data-paused-bgmusic');
+                if (bgMusic && bgMusic.paused) {
+                    bgMusic.play().then(() => {
+                        if (iconPlay) iconPlay.style.display = 'none';
+                        if (iconPause) iconPause.style.display = 'block';
+                    }).catch(() => { });
+                }
+            }
+        };
+
+        video.addEventListener('pause', resumeBgMusic);
+        video.addEventListener('ended', resumeBgMusic);
+
+        // Dinamis sesuaikan rasio aspek sesuai resolusi file video yang sebenarnya
+        const applyRatio = function () {
+            if (video.videoWidth && video.videoHeight) {
+                const container = video.closest('.video-frame-container');
+                if (container) {
+                    container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+                }
+            }
+        };
+
+        video.addEventListener('loadedmetadata', applyRatio);
+        if (video.readyState >= 1) {
+            applyRatio();
+        }
     });
 
-    // Pengecekan orientasi layar khusus Video 1 (Landscape)
+    // Pengecekan orientasi layar untuk semua video landscape (harus memutar handphone ke posisi horizontal)
     function checkOrientation() {
         const isLandscape = window.matchMedia("(orientation: landscape)").matches || (window.innerWidth > window.innerHeight);
         const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 900);
 
-        const overlay1 = document.getElementById('rotate-overlay-1');
-        if (overlay1) {
-            if (isMobile && !isLandscape) {
-                // Di HP mode vertikal: tampilkan overlay di Video 1 jika belum di-dismiss
-                if (!overlay1.classList.contains('dismissed')) {
-                    overlay1.style.display = 'flex';
+        [1, 2].forEach(id => {
+            const overlay = document.getElementById('rotate-overlay-' + id);
+            const video = document.getElementById('video-memories-' + id);
+            if (overlay) {
+                if (isMobile && !isLandscape) {
+                    // Di HP mode vertikal: tampilkan overlay & hentikan video jika sedang berputar
+                    overlay.style.display = 'flex';
+                    if (video && !video.paused && !document.fullscreenElement && !document.webkitFullscreenElement) {
+                        video.pause();
+                    }
+                } else {
+                    // Di mode horizontal atau di desktop: sembunyikan overlay
+                    overlay.style.display = 'none';
                 }
-            } else {
-                // Di mode horizontal atau di desktop: sembunyikan overlay
-                overlay1.style.display = 'none';
             }
-        }
+        });
     }
 
     window.addEventListener('resize', checkOrientation);
     window.addEventListener('orientationchange', function () {
         setTimeout(checkOrientation, 250);
     });
+    document.addEventListener('fullscreenchange', checkOrientation);
+    document.addEventListener('webkitfullscreenchange', checkOrientation);
     checkOrientation();
 }
 
-// Handler tombol putar layar penuh (fullscreen)
+// Handler tombol putar layar penuh (fullscreen horizontal)
 function handleRotateAndPlay(videoId) {
     const video = document.getElementById('video-memories-' + videoId);
     if (!video) return;
 
     const overlay = document.getElementById('rotate-overlay-' + videoId);
     if (overlay) {
-        overlay.classList.add('dismissed');
         overlay.style.display = 'none';
     }
 
@@ -705,19 +762,6 @@ function handleRotateAndPlay(videoId) {
     }
 
     video.play().catch(() => { });
-}
-
-// Handler tombol putar di tempat (inline) tanpa harus fullscreen/rotate
-function dismissRotateOverlay(videoId) {
-    const overlay = document.getElementById('rotate-overlay-' + videoId);
-    const video = document.getElementById('video-memories-' + videoId);
-    if (overlay) {
-        overlay.classList.add('dismissed');
-        overlay.style.display = 'none';
-    }
-    if (video) {
-        video.play().catch(() => { });
-    }
 }
 
 // ==========================================
@@ -1033,8 +1077,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const card = canvas.closest('.scratch-card');
             const cardRect = card ? card.getBoundingClientRect() : canvas.getBoundingClientRect();
             const w = Math.round(cardRect.width || card?.offsetWidth || 220);
-            const isCard43 = card && card.classList.contains('aspect-4-3');
-            const h = Math.round(cardRect.height || card?.offsetHeight || (isCard43 ? Math.round(w * 3 / 4) : Math.round(w * 4 / 3)));
+            const isCard32 = card && card.classList.contains('aspect-3-2');
+            const isCard916 = card && card.classList.contains('aspect-9-16');
+            let h = Math.round(cardRect.height || card?.offsetHeight || 0);
+            if (!h || h === 0) {
+                h = isCard32 ? Math.round(w * 2 / 3) : (isCard916 ? Math.round(w * 16 / 9) : Math.round(w * 2 / 3));
+            }
             canvas.width = w;
             canvas.height = h;
 
