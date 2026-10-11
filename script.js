@@ -512,6 +512,12 @@ document.addEventListener("DOMContentLoaded", function () {
                         modalSpotifyIframe.src = embedUrl;
                     }
 
+                    // Otomatis jeda musik latar saat membuka Spotify
+                    const bgMusic = document.getElementById('bg-music');
+                    if (bgMusic && !bgMusic.paused) {
+                        bgMusic.pause();
+                    }
+
                     const customCaption = this.getAttribute('data-caption');
                     const capEl = this.querySelector('.planet-caption');
                     const teksCaption = customCaption ? customCaption : (capEl ? capEl.innerText : '');
@@ -535,6 +541,12 @@ document.addEventListener("DOMContentLoaded", function () {
                         modalIframe.classList.add('iframe-spotify');
                     } else if (embedUrl.includes('facebook.com')) {
                         modalIframe.classList.add('iframe-facebook');
+                    }
+
+                    // Otomatis jeda musik latar saat membuka video YouTube
+                    const bgMusic = document.getElementById('bg-music');
+                    if (bgMusic && !bgMusic.paused) {
+                        bgMusic.pause();
                     }
 
                     const customCaption = this.getAttribute('data-caption');
@@ -630,6 +642,9 @@ function tutupModal() {
 
     if (modal) {
         modal.classList.remove('show-modal');
+        const hadMedia = (modalIframe && modalIframe.src && modalIframe.src !== "") ||
+            (modalSpotifyIframe && modalSpotifyIframe.src && modalSpotifyIframe.src !== "");
+
         // KUNCI PENTING: Mengosongkan src agar lagu/video berhenti berputar saat ditutup
         if (modalIframe) modalIframe.src = "";
         if (modalSpotifyIframe) modalSpotifyIframe.src = "";
@@ -640,6 +655,15 @@ function tutupModal() {
             modalImg.style.height = "";
             modalImg.style.maxWidth = "";
             modalImg.style.maxHeight = "";
+        }
+
+        // Jika sebelumnya membuka video/musik di modal, otomatis mainkan kembali lagu website saat modal ditutup
+        if (hadMedia) {
+            const bgMusic = document.getElementById('bg-music');
+            const anyVideoPlaying = Array.from(document.querySelectorAll('.memory-video')).some(v => !v.paused && !v.ended && v.currentTime > 0);
+            if (!anyVideoPlaying && bgMusic && bgMusic.paused) {
+                bgMusic.play().catch(() => { });
+            }
         }
     }
 }
@@ -652,10 +676,47 @@ function initVideoMemories() {
     const bgMusic = document.getElementById('bg-music');
     const iconPlay = document.getElementById('icon-play');
     const iconPause = document.getElementById('icon-pause');
+    let resumeTimeout = null;
+
+    // Helper untuk memperbarui ikon musik (Play/Pause)
+    const updateMusicIcon = function (isPlaying) {
+        if (iconPlay) iconPlay.style.display = isPlaying ? 'none' : 'block';
+        if (iconPause) iconPause.style.display = isPlaying ? 'block' : 'none';
+    };
+
+    // Sinkronisasi otomatis ikon dengan status audio bgMusic
+    if (bgMusic && !bgMusic.hasAttribute('data-icon-bound')) {
+        bgMusic.setAttribute('data-icon-bound', 'true');
+        bgMusic.addEventListener('play', () => updateMusicIcon(true));
+        bgMusic.addEventListener('pause', () => updateMusicIcon(false));
+    }
+
+    // Fungsi memutar kembali musik latar website jika tidak ada video yang sedang berjalan
+    const resumeWebsiteMusic = function () {
+        if (!bgMusic) return;
+        const anyVideoPlaying = Array.from(videos).some(v => !v.paused && !v.ended && v.currentTime > 0);
+        if (!anyVideoPlaying) {
+            bgMusic.play().then(() => {
+                updateMusicIcon(true);
+            }).catch(err => {
+                console.log("Autoplay musik dicegah oleh browser:", err);
+            });
+        }
+    };
+
+    // Jadwalkan pemutaran lagu dengan debounce agar tidak bentrok antar-video / saat scrubbing
+    const scheduleResumeBgMusic = function () {
+        if (resumeTimeout) clearTimeout(resumeTimeout);
+        resumeTimeout = setTimeout(() => {
+            resumeWebsiteMusic();
+        }, 150);
+    };
 
     videos.forEach(video => {
-        // Otomatis matikan (pause) backsong saat video diputar
+        // Otomatis matikan (pause) lagu website saat video diputar
         video.addEventListener('play', function () {
+            if (resumeTimeout) clearTimeout(resumeTimeout);
+
             // Hentikan video lain jika sedang menyala agar tidak bertumpuk
             videos.forEach(otherVideo => {
                 if (otherVideo !== video && !otherVideo.paused) {
@@ -663,31 +724,38 @@ function initVideoMemories() {
                 }
             });
 
-            // Otomatis matikan backsong saat memutar video
+            // Otomatis matikan lagu website saat memutar video
             if (bgMusic && !bgMusic.paused) {
                 bgMusic.pause();
-                video.setAttribute('data-paused-bgmusic', 'true');
-                if (iconPlay) iconPlay.style.display = 'block';
-                if (iconPause) iconPause.style.display = 'none';
+                updateMusicIcon(false);
             }
         });
 
-        // Resume backsong saat video di-pause atau selesai (jika tidak ada video lain yang menyala)
-        const resumeBgMusic = function () {
-            const anyVideoPlaying = Array.from(videos).some(v => !v.paused);
-            if (!anyVideoPlaying && video.getAttribute('data-paused-bgmusic') === 'true') {
-                video.removeAttribute('data-paused-bgmusic');
-                if (bgMusic && bgMusic.paused) {
-                    bgMusic.play().then(() => {
-                        if (iconPlay) iconPlay.style.display = 'none';
-                        if (iconPause) iconPause.style.display = 'block';
-                    }).catch(() => { });
+        // Resume lagu website saat video di-pause
+        video.addEventListener('pause', scheduleResumeBgMusic);
+
+        // Resume lagu website saat video selesai diputar (ended)
+        video.addEventListener('ended', function () {
+            // Keluar dari fullscreen jika sedang fullscreen agar kembali ke halaman
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => { });
+            } else if (document.webkitFullscreenElement) {
+                if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
                 }
             }
-        };
+            if (screen.orientation && screen.orientation.unlock) {
+                try { screen.orientation.unlock(); } catch (e) { }
+            }
+            scheduleResumeBgMusic();
+        });
 
-        video.addEventListener('pause', resumeBgMusic);
-        video.addEventListener('ended', resumeBgMusic);
+        // Dukungan jika pengguna menutup mode layar penuh di iOS Safari
+        video.addEventListener('webkitendfullscreen', function () {
+            if (video.paused || video.ended) {
+                scheduleResumeBgMusic();
+            }
+        });
 
         // Dinamis sesuaikan rasio aspek sesuai resolusi file video yang sebenarnya
         const applyRatio = function () {
